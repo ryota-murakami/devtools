@@ -4,11 +4,17 @@ import { ThreadFront } from "./thread";
 import { assert, binarySearch, defer, Deferred } from "./utils";
 import { DownloadCancelledError, ScreenshotCache } from "./screenshot-cache";
 import ResizeObserverPolyfill from "resize-observer-polyfill";
-import { TimeStampedPoint, MouseEvent, paintPoints, ScreenShot } from "@recordreplay/protocol";
+import {
+  TimeStampedPoint,
+  MouseEvent,
+  paintPoints,
+  ScreenShot,
+  PaintPoint,
+} from "@recordreplay/protocol";
 import { decode } from "base64-arraybuffer";
 import { UIStore, UIThunkAction } from "ui/actions";
 import { setCanvas, setEventsForType, setVideoUrl } from "ui/reducers/app";
-import { setPlaybackPrecachedTime, setPlaybackStalled } from "ui/reducers/timeline";
+import { pointsReceived, setPlaybackPrecachedTime, setPlaybackStalled } from "ui/reducers/timeline";
 import { getPlaybackPrecachedTime, getRecordingDuration } from "ui/reducers/timeline";
 import { Canvas } from "ui/state/app";
 
@@ -125,7 +131,8 @@ export const videoReady: Deferred<void> = defer();
 
 const gPaintPromises: Promise<ScreenShot | undefined>[] = [];
 
-function onPaints({ paints }: paintPoints) {
+function onPaints(paints: PaintPoint[], store: UIStore) {
+  store.dispatch(pointsReceived(paints));
   paints.forEach(async ({ point, time, screenShots }) => {
     const paintHash = screenShots.find(desc => desc.mimeType == "image/jpeg")!.hash;
     insertEntrySorted(gPaintPoints, { point, time, paintHash });
@@ -159,6 +166,7 @@ function onPaints({ paints }: paintPoints) {
 }
 
 function onMouseEvents(events: MouseEvent[], store: UIStore) {
+  store.dispatch(pointsReceived(events));
   events.forEach(entry => {
     insertEntrySorted(gMouseEvents, entry);
     if (entry.kind == "mousedown") {
@@ -256,7 +264,7 @@ export function setupGraphics(store: UIStore) {
       await Promise.all(gPaintPromises);
       videoReady.resolve();
     });
-    client.Graphics.addPaintPointsListener(onPaints);
+    client.Graphics.addPaintPointsListener(({ paints }) => onPaints(paints, store));
 
     client.Session.findMouseEvents({}, sessionId);
     client.Session.addMouseEventsListener(({ events }) => onMouseEvents(events, store));

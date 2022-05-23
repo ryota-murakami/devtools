@@ -112,6 +112,10 @@ export default function update(state = initial, action: AnyAction) {
       state.values = clearBreakpointHitCounts(state);
       break;
 
+    case "timeline/setTrimRegion":
+      state.values = clearBreakpointHitCounts(state);
+      break;
+
     case "SET_SOURCE_ACTOR_BREAKABLE_LINES":
       state = updateBreakableLines(state, action as SetSourceActorBreakableLinesAction);
       break;

@@ -1,4 +1,6 @@
+import { TimeStampedPoint } from "@recordreplay/protocol";
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import { sortBy, uniqBy } from "lodash";
 import { UIState } from "ui/state";
 import { FocusRegion, HoveredItem, TimelineState, ZoomRegion } from "ui/state/timeline";
 
@@ -11,6 +13,7 @@ function initialTimelineState(): TimelineState {
     hoveredItem: null,
     playback: null,
     playbackPrecachedTime: 0,
+    points: [],
     recordingDuration: null,
     shouldAnimate: true,
     showFocusModeControls: false,
@@ -42,6 +45,12 @@ const timelineSlice = createSlice({
     setTrimRegion(state, action: PayloadAction<FocusRegion | null>) {
       state.focusRegion = action.payload;
     },
+    pointsReceived(state, action: PayloadAction<TimeStampedPoint[]>) {
+      state.points = sortBy(
+        uniqBy(state.points.concat(action.payload), p => p.time),
+        p => p.time
+      );
+    },
   },
 });
 
@@ -51,6 +60,7 @@ export const {
   setPlaybackStalled,
   setTrimRegion,
   setTimelineState,
+  pointsReceived,
 } = timelineSlice.actions;
 
 export default timelineSlice.reducer;

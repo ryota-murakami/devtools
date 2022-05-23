@@ -1,4 +1,5 @@
 import { ExecutionPoint, PauseId } from "@recordreplay/protocol";
+import sortedIndexBy from "lodash/sortedIndexBy";
 import {
   getGraphicsAtTime,
   paintGraphics,
@@ -17,7 +18,6 @@ import type { ThreadFront as ThreadFrontType } from "protocol/thread";
 import { Pause } from "protocol/thread/pause";
 import { PauseEventArgs } from "protocol/thread/thread";
 import { assert, waitForTime } from "protocol/utils";
-import { Action } from "redux";
 import { getFirstComment } from "ui/hooks/comments/comments";
 import {
   getCurrentTime,
@@ -28,7 +28,7 @@ import {
   getZoomRegion,
   getShowFocusModeControls,
 } from "ui/reducers/timeline";
-import { TimelineState, ZoomRegion, HoveredItem, FocusRegion } from "ui/state/timeline";
+import { HoveredItem, FocusRegion } from "ui/state/timeline";
 import { getPausePointParams, getTest, updateUrlWithParams } from "ui/utils/environment";
 import KeyShortcuts, { isEditableElement } from "ui/utils/key-shortcuts";
 import { features } from "ui/utils/prefs";
@@ -456,7 +456,9 @@ export function clearHoveredItem(): UIThunkAction {
   };
 }
 
-export function setFocusRegion(focusRegion: FocusRegion | null): UIThunkAction {
+export function setFocusRegion(
+  focusRegion: { startTime: number; endTime: number } | null
+): UIThunkAction {
   return (dispatch, getState) => {
     const state = getState();
     const currentTime = getCurrentTime(state);
@@ -467,65 +469,93 @@ export function setFocusRegion(focusRegion: FocusRegion | null): UIThunkAction {
       dispatch(stopPlayback());
     }
 
-    if (focusRegion !== null) {
-      const zoomRegion = getZoomRegion(state);
-      const { endTime: prevEndTime, startTime: prevStartTime } = getFocusRegion(state) || {};
-
-      let { endTime, startTime } = focusRegion;
-
-      // Basic bounds check.
-      if (startTime < zoomRegion.startTime) {
-        startTime = zoomRegion.startTime;
-      }
-      if (endTime > zoomRegion.endTime) {
-        endTime = zoomRegion.endTime;
-      }
-
-      // Make sure our region is valid.
-      if (endTime < startTime) {
-        // If we need to adjust a dimension, it's the most intuitive to adjust the one that's being updated.
-        if (prevEndTime === endTime) {
-          startTime = endTime;
-        } else {
-          endTime = startTime;
-        }
-      }
-
-      // Make sure the current time stays within the bounds of our selected region.
-      if (currentTime < startTime) {
-        dispatch(setTimelineState({ currentTime: startTime }));
-      } else if (currentTime > endTime) {
-        dispatch(setTimelineState({ currentTime: endTime }));
-      }
-
-      // Update the previous to match the handle that's being dragged.
-      if (startTime !== prevStartTime && endTime === prevEndTime) {
-        dispatch(setTimelineToTime(startTime));
-      } else if (startTime === prevStartTime && endTime !== prevEndTime) {
-        dispatch(setTimelineToTime(endTime));
-      } else {
-        // Else just make sure the preview time stays within the moving window.
-        const hoverTime = getHoverTime(state);
-        if (hoverTime !== null) {
-          if (hoverTime < startTime) {
-            dispatch(setTimelineToTime(startTime));
-          } else if (hoverTime > endTime) {
-            dispatch(setTimelineToTime(endTime));
-          }
-        } else {
-          dispatch(setTimelineToTime(currentTime));
-        }
-      }
-
-      dispatch(
-        setTrimRegion({
-          endTime,
-          startTime,
-        })
-      );
-    } else {
+    if (focusRegion === null) {
       dispatch(setTrimRegion(null));
+      return;
     }
+
+    const zoomRegion = getZoomRegion(state);
+    const { endTime: prevEndTime, startTime: prevStartTime } = getFocusRegion(state) || {};
+
+    let { endTime, startTime } = focusRegion;
+
+    // Basic bounds check.
+    if (startTime < zoomRegion.startTime) {
+      startTime = zoomRegion.startTime;
+    }
+    if (endTime > zoomRegion.endTime) {
+      endTime = zoomRegion.endTime;
+    }
+
+    // Make sure our region is valid.
+    if (endTime < startTime) {
+      // If we need to adjust a dimension, it's the most intuitive to adjust the one that's being updated.
+      if (prevEndTime === endTime) {
+        startTime = endTime;
+      } else {
+        endTime = startTime;
+      }
+    }
+
+    // Make sure the current time stays within the bounds of our selected region.
+    if (currentTime < startTime) {
+      dispatch(setTimelineState({ currentTime: startTime }));
+    } else if (currentTime > endTime) {
+      dispatch(setTimelineState({ currentTime: endTime }));
+    }
+
+    // Update the previous to match the handle that's being dragged.
+    if (startTime !== prevStartTime && endTime === prevEndTime) {
+      dispatch(setTimelineToTime(startTime));
+    } else if (startTime === prevStartTime && endTime !== prevEndTime) {
+      dispatch(setTimelineToTime(endTime));
+    } else {
+      // Else just make sure the preview time stays within the moving window.
+      const hoverTime = getHoverTime(state);
+      if (hoverTime !== null) {
+        if (hoverTime < startTime) {
+          dispatch(setTimelineToTime(startTime));
+        } else if (hoverTime > endTime) {
+          dispatch(setTimelineToTime(endTime));
+        }
+      } else {
+        dispatch(setTimelineToTime(currentTime));
+      }
+    }
+
+    // We now try and create a focus region with a time and a point, from just a
+    // time. In the future, it would be better if this were something like
+    // "setFocusRegionByTime" and we had another method which accepted
+    // TimeStampedPoints, because setting via context menu will often happen on
+    // resources where we already know the time *and* point. Also, we probably
+    // should *not* do this on every mouse movement in focus mode. This is
+    // actually foregoing most of the `getPointNearTime`, and instead relying on
+    // points that we mostly have already. I think often this will be OK, but
+    // probably we should also run "getPointNearTime", store that, and take the
+    // closest thing we can find of the points we have (assuming we don't have
+    // an exact match.)
+    const startIndex = sortedIndexBy(
+      state.timeline.points,
+      { time: startTime, point: "" },
+      p => p.time
+    );
+    const start =
+      startIndex > 0 ? state.timeline.points[startIndex - 1] : { point: "", time: startTime };
+    const endIndex = sortedIndexBy(
+      state.timeline.points,
+      { time: endTime, point: "" },
+      p => p.time
+    );
+    const end = endIndex > 0 ? state.timeline.points[endIndex - 1] : { point: "", time: endTime };
+
+    dispatch(
+      setTrimRegion({
+        start,
+        startTime,
+        end,
+        endTime,
+      })
+    );
   };
 }
 
@@ -583,16 +613,18 @@ export function syncFocusedRegion(): UIThunkAction {
       return;
     }
 
-    sendMessage(
-      "Session.unloadRegion",
-      { region: { begin: 0, end: focusRegion.startTime } },
-      window.sessionId
-    );
-    sendMessage(
-      "Session.unloadRegion",
-      { region: { begin: focusRegion.endTime, end: zoomRegion.endTime } },
-      window.sessionId
-    );
+    if (!features.softFocus) {
+      sendMessage(
+        "Session.unloadRegion",
+        { region: { begin: 0, end: focusRegion.startTime } },
+        window.sessionId
+      );
+      sendMessage(
+        "Session.unloadRegion",
+        { region: { begin: focusRegion.endTime, end: zoomRegion.endTime } },
+        window.sessionId
+      );
+    }
     sendMessage(
       "Session.loadRegion",
       {

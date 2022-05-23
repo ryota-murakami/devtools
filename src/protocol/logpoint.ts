@@ -19,6 +19,7 @@ import { UIStore } from "ui/actions";
 import { setAnalysisError, setAnalysisPoints } from "ui/reducers/app";
 import { getAnalysisPointsForLocation } from "ui/reducers/app";
 import { ProtocolError } from "ui/state/app";
+import { pointsReceived } from "ui/reducers/timeline";
 
 const { prefs } = require("ui/utils/prefs");
 
@@ -271,6 +272,7 @@ async function setMultiSourceLogpoint(
 
   handler.onAnalysisPoints = newPoints => {
     points.push(...newPoints);
+    store.dispatch(pointsReceived(points));
     if (showInConsole && !condition) {
       if (primitiveFronts) {
         showPrimitiveLogpoints(logGroupId, newPoints, primitiveFronts);
@@ -526,7 +528,9 @@ export async function setExceptionLogpoint(logGroupId: string) {
     exceptionPoints: true,
   };
   const handler: AnalysisHandler<void> = {
-    onAnalysisPoints: points => showLogpointsLoading(logGroupId, points),
+    onAnalysisPoints: points => {
+      showLogpointsLoading(logGroupId, points);
+    },
     onAnalysisResult: result => showLogpointsResult(logGroupId, result),
   };
 
